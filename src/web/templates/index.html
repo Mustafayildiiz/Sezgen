@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="light">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sezgen — Havalimanı Pist FOD Tespit Sistemi</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+    <div class="app-container">
+        <!-- Üst Başlık Çubuğu -->
+        <header class="topbar">
+            <div class="brand">
+                <svg class="brand-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1d70db" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+                </svg>
+                <h1 class="brand-title">Sezgen</h1>
+            </div>
+
+            <button id="themeToggleBtn" class="theme-toggle" type="button" title="Temayı Değiştir">
+                <svg class="sun-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2"></path>
+                    <path d="M12 20v2"></path>
+                    <path d="m4.93 4.93 1.41 1.41"></path>
+                    <path d="m17.66 17.66 1.41 1.41"></path>
+                    <path d="M2 12h2"></path>
+                    <path d="M20 12h2"></path>
+                    <path d="m6.34 17.66-1.41 1.41"></path>
+                    <path d="m19.07 4.93-1.41 1.41"></path>
+                </svg>
+                <span id="themeToggleLabel">Aydınlık tema</span>
+            </button>
+        </header>
+
+        <!-- Ana 3 Sütunlu Operasyonel Panel -->
+        <main class="main-grid">
+            <!-- Sol Panel: Video Yükleyiniz & Kontroller -->
+            <section class="card left-panel">
+                <h2 class="panel-heading">Video Yükleyiniz</h2>
+                <div class="heading-underline"></div>
+
+                <label id="dropZone" class="upload-dropzone" for="fileInput">
+                    <input id="fileInput" type="file" accept="video/*,image/*,.pt,.onnx,.csv" hidden />
+                    <svg class="upload-arrow" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#1565c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 4v15"></path>
+                        <path d="m6 13 6 6 6-6"></path>
+                    </svg>
+                    <p id="uploadText" class="upload-caption">Dosya sürükleyip bırakın veya yükleyin</p>
+                </label>
+
+                <!-- Canlı Akış / Derin Tarama Anahtarı -->
+                <div class="mode-switch-row">
+                    <span id="labelLiveStream" class="mode-label active">Canlı Akış</span>
+                    <button id="modeSwitchBtn" class="switch-pill" type="button" role="switch" aria-checked="false" title="Canlı Akış / Derin Tarama (SAHI)">
+                        <span class="switch-thumb"></span>
+                    </button>
+                    <span id="labelDeepScan" class="mode-label">Derin Tarama</span>
+                </div>
+
+                <!-- Eşik Değerleri (Confidence, IoU, Alarm) -->
+                <div class="sliders-group">
+                    <div class="slider-block">
+                        <div class="slider-title">Eşik 1: <span id="valEsik1">44%</span></div>
+                        <div class="slider-row">
+                            <span class="bound-label">0%</span>
+                            <input id="sliderEsik1" type="range" min="0" max="100" value="44" class="sezgen-slider" />
+                            <span class="bound-label">100%</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-block">
+                        <div class="slider-title">Eşik 2: <span id="valEsik2">65%</span></div>
+                        <div class="slider-row">
+                            <span class="bound-label">0%</span>
+                            <input id="sliderEsik2" type="range" min="0" max="100" value="65" class="sezgen-slider" />
+                            <span class="bound-label">100%</span>
+                        </div>
+                    </div>
+
+                    <div class="slider-block">
+                        <div class="slider-title">Eşik 3: <span id="valEsik3">85%</span></div>
+                        <div class="slider-row">
+                            <span class="bound-label">0%</span>
+                            <input id="sliderEsik3" type="range" min="0" max="100" value="85" class="sezgen-slider" />
+                            <span class="bound-label">100%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="start-btn-wrap">
+                    <button id="startBtn" class="btn-primary" type="button">Başla</button>
+                </div>
+            </section>
+
+            <!-- Orta Panel: Pist Kamera Görüntüsü + Sistem Günlükleri -->
+            <section class="center-column">
+                <div class="video-card" id="videoCard">
+                    <img id="videoStreamImg" class="runway-stream" alt="Pist Kamera Akışı" src="/api/stream" />
+
+                    <!-- Kamera HUD Katmanı -->
+                    <div class="hud-overlay">
+                        <div id="hudTimestamp" class="hud-line">24/10/27 02:47:38 UTC</div>
+                        <div id="hudCamera" class="hud-line">CAM 04 - RUNWAY 27R</div>
+                        <div id="hudLiveBadge" class="hud-badge">
+                            <span class="hud-dot"></span>
+                            <span id="hudBadgeText">CANLI AKIŞ</span>
+                        </div>
+                    </div>
+
+                    <!-- Anlık FOD Alarm Göstergesi -->
+                    <div id="alarmBanner" class="alarm-banner hidden">
+                        <span class="alarm-pulse"></span>
+                        <span>FOD ALARMI — PİST ÜZERİNDE YABANCI CİSİM!</span>
+                    </div>
+                </div>
+
+                <!-- Sistem Günlükleri Kartı -->
+                <div class="card logs-card">
+                    <div class="logs-header">
+                        <h3 class="card-title">Sistem Günlükleri</h3>
+                        <div class="export-actions">
+                            <a href="/api/export/csv" class="export-link" title="CSV Raporu İndir">CSV</a>
+                            <a href="/api/export/pdf" class="export-link" title="PDF Raporu İndir">PDF</a>
+                        </div>
+                    </div>
+                    <div id="logsContainer" class="logs-box">
+                        <div class="log-entry">[12:00:00] Sistem başlatıldı.</div>
+                        <div class="log-entry">[12:00:05] Video akışı alındı.</div>
+                        <div class="log-entry">[12:00:10] FOD tespiti yapıldı.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sağ Panel: Bulunan Eşyalar -->
+            <aside class="card right-panel">
+                <h2 class="card-title">Bulunan Eşyalar</h2>
+                <div id="foundItemsList" class="found-items-list">
+                    <!-- JS ile dinamik güncellenir -->
+                </div>
+            </aside>
+        </main>
+
+        <!-- Alt Panel: Eğitim Grafikleri -->
+        <section class="card charts-panel">
+            <div class="charts-header">
+                <h2 class="card-title">Eğitim Grafikleri</h2>
+                <div class="chart-legend">
+                    <span class="legend-line blue"></span>
+                    <span class="legend-line grey"></span>
+                </div>
+            </div>
+            <div class="charts-divider"></div>
+            <div class="charts-grid">
+                <div class="chart-wrapper">
+                    <canvas id="trainingChartLeft"></canvas>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="trainingChartRight"></canvas>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

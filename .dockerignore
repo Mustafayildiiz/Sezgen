@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.venv/
+venv/
+data/
+dateset/
+dataset/
+uploads/
+reports/*.csv
+reports/*.pdf
+*.md
+notebooks/

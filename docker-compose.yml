@@ -1,0 +1,49 @@
+services:
+  sezgen-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sezgen-fod-system
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./uploads:/app/uploads
+    environment:
+      - SEZGEN_HOST=0.0.0.0
+      - SEZGEN_PORT=8000
+      - MODEL_PATH=/app/models/best.pt
+      - DEFAULT_CONF=0.44
+      - DEFAULT_IOU=0.65
+      - DEFAULT_ALARM_THRESH=0.85
+    restart: unless-stopped
+
+  # Opsiyonel: GPU (NVIDIA CUDA) destekli servis profili
+  # Kullanım: docker compose --profile gpu up --build
+  sezgen-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sezgen-fod-gpu
+    profiles:
+      - gpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./uploads:/app/uploads
+    environment:
+      - SEZGEN_HOST=0.0.0.0
+      - SEZGEN_PORT=8000
+      - MODEL_PATH=/app/models/best.pt
+      - DEVICE=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

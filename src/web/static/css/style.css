@@ -1,0 +1,593 @@
+/* Sezgen - Havalimanı Pist FOD Tespit Sistemi
+   Figma Tasarımı (Aydınlık Tema & Karanlık Tema) Birebir Stil Dosyası */
+
+:root,
+[data-theme="light"] {
+    --bg-page: #edf2f8;
+    --bg-card: #ffffff;
+    --border-card: #dce4ef;
+    --text-primary: #1a2232;
+    --text-secondary: #68778d;
+    --text-muted: #7b899d;
+    --brand-color: #1e293b;
+    --accent-blue: #0b65c6;
+    --accent-blue-hover: #0851a1;
+    --dropzone-bg: #ecf4fc;
+    --dropzone-border: #1d70db;
+    --slider-track: #d9e2ec;
+    --slider-thumb-ring: #ffffff;
+    --log-box-bg: #f4f7fb;
+    --log-box-border: #dce4ef;
+    --chart-grid: #e8eef5;
+    --chart-label: #7a869a;
+    --divider-line: #e4ebf3;
+}
+
+[data-theme="dark"] {
+    --bg-page: #0b111e;
+    --bg-card: #111927;
+    --border-card: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #7f8ea3;
+    --brand-color: #f8fafc;
+    --accent-blue: #1565c0;
+    --accent-blue-hover: #1d70db;
+    --dropzone-bg: #0a2246;
+    --dropzone-border: #1d70db;
+    --slider-track: #263244;
+    --slider-thumb-ring: #e2e8f0;
+    --log-box-bg: #0e1624;
+    --log-box-border: #1e293b;
+    --chart-grid: #cbd5e1;
+    --chart-label: #7b899d;
+    --divider-line: #1e293b;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    min-height: 100vh;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 18px 24px 32px;
+}
+
+/* Üst Bar */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.brand-title {
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--brand-color);
+}
+
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.theme-toggle:hover {
+    color: var(--text-primary);
+    background-color: rgba(100, 116, 139, 0.1);
+}
+
+/* Ana 3 Sütunlu Grid */
+.main-grid {
+    display: grid;
+    grid-template-columns: 310px 1fr 228px;
+    gap: 20px;
+    align-items: stretch;
+    margin-bottom: 20px;
+}
+
+.card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: 16px;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Sol Panel: Video Yükleyiniz */
+.left-panel {
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-heading {
+    font-size: 22px;
+    font-weight: 500;
+    text-align: center;
+    color: var(--text-primary);
+    margin-bottom: 14px;
+}
+
+.heading-underline {
+    height: 2px;
+    background-color: #1565c0;
+    width: 100%;
+    margin-bottom: 22px;
+}
+
+.upload-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    padding: 20px 14px;
+    background-color: var(--dropzone-bg);
+    border: 1.5px dashed var(--dropzone-border);
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: center;
+    transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.2s ease;
+    margin-bottom: 22px;
+}
+
+.upload-dropzone:hover,
+.upload-dropzone.dragover {
+    border-color: #0b65c6;
+    transform: translateY(-1px);
+}
+
+.upload-arrow {
+    margin-bottom: 14px;
+}
+
+.upload-caption {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* Canlı Akış / Derin Tarama Anahtarı */
+.mode-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.mode-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.switch-pill {
+    position: relative;
+    width: 48px;
+    height: 24px;
+    background-color: #1565c0;
+    border: 1.5px solid #1565c0;
+    border-radius: 999px;
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.2s ease;
+}
+
+.switch-thumb {
+    position: absolute;
+    top: 1px;
+    left: 22px;
+    width: 19px;
+    height: 19px;
+    background-color: #ffffff;
+    border-radius: 50%;
+    transition: transform 0.2s ease, left 0.2s ease;
+}
+
+.switch-pill[aria-checked="true"] .switch-thumb {
+    left: 3px;
+}
+
+/* Eşik Kaydırıcıları (Sliders) */
+.sliders-group {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-bottom: 30px;
+}
+
+.slider-block {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.slider-title {
+    font-family: "Courier New", Consolas, monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bound-label {
+    font-family: "Courier New", Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    min-width: 26px;
+}
+
+.sezgen-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--slider-track);
+    border-radius: 999px;
+    outline: none;
+    cursor: pointer;
+}
+
+.sezgen-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #1565c0;
+    border: 2px solid var(--slider-thumb-ring);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+}
+
+.sezgen-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #1565c0;
+    border: 2px solid var(--slider-thumb-ring);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+}
+
+.start-btn-wrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+}
+
+.btn-primary {
+    background-color: var(--accent-blue);
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    width: 155px;
+    height: 44px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn-primary:hover {
+    background-color: var(--accent-blue-hover);
+}
+
+.btn-primary:active {
+    transform: scale(0.98);
+}
+
+.btn-primary.running {
+    background-color: #dc2626;
+}
+
+/* Orta Sütun: Kamera + Sistem Günlükleri */
+.center-column {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.video-card {
+    position: relative;
+    width: 100%;
+    height: 510px;
+    border-radius: 16px;
+    overflow: hidden;
+    background-color: #05070b;
+    border: 1px solid var(--border-card);
+}
+
+.runway-stream {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* Kamera Üstü HUD Katmanı */
+.hud-overlay {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    pointer-events: none;
+    color: #cbd5e1;
+    font-family: "Courier New", Consolas, monospace;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.hud-line {
+    font-size: 15px;
+    line-height: 1.25;
+    letter-spacing: 0.3px;
+}
+
+.hud-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 6px;
+    margin-left: 14px;
+    padding: 4px 11px;
+    background-color: rgba(20, 29, 43, 0.82);
+    border-radius: 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    color: #e2e8f0;
+    letter-spacing: 0.4px;
+}
+
+.hud-dot {
+    width: 6px;
+    height: 6px;
+    background-color: #ffffff;
+    border-radius: 50%;
+}
+
+/* Kırmızı FOD Alarm Şeridi */
+.alarm-banner {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: rgba(220, 38, 38, 0.92);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 14px;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.5);
+}
+
+.alarm-banner.hidden {
+    display: none;
+}
+
+.alarm-pulse {
+    width: 8px;
+    height: 8px;
+    background-color: #ffffff;
+    border-radius: 50%;
+    animation: pulseAnim 1s infinite;
+}
+
+@keyframes pulseAnim {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(1.3); }
+}
+
+/* Sistem Günlükleri Kartı */
+.logs-card {
+    padding: 16px 20px 18px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.logs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.card-title {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.export-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.export-link {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border-card);
+    padding: 3px 8px;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+}
+
+.export-link:hover {
+    color: #ffffff;
+    background-color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+.logs-box {
+    background-color: var(--log-box-bg);
+    border: 1px solid var(--log-box-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-height: 118px;
+    max-height: 138px;
+    overflow-y: auto;
+    font-family: "Courier New", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--text-primary);
+}
+
+.log-entry.alarm {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+/* Sağ Panel: Bulunan Eşyalar */
+.right-panel {
+    padding: 20px 18px;
+    display: flex;
+    flex-direction: column;
+}
+
+.found-items-list {
+    margin-top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    max-height: 600px;
+}
+
+.found-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.found-thumb {
+    width: 46px;
+    height: 46px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 1px solid var(--border-card);
+    flex-shrink: 0;
+}
+
+.found-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.found-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.found-sector {
+    font-family: "Courier New", Consolas, monospace;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+/* Alt Panel: Eğitim Grafikleri */
+.charts-panel {
+    padding: 18px 24px 26px;
+}
+
+.charts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
+.chart-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.legend-line {
+    display: inline-block;
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+}
+
+.legend-line.blue {
+    background-color: #1565c0;
+}
+
+.legend-line.grey {
+    background-color: #78879b;
+}
+
+.charts-divider {
+    height: 1px;
+    background-color: var(--divider-line);
+    margin-bottom: 22px;
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 36px;
+}
+
+.chart-wrapper {
+    width: 100%;
+    height: 310px;
+    position: relative;
+}
+
+.chart-wrapper canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Küçük ekran uyumluluğu */
+@media (max-width: 1120px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+    .charts-grid {
+        grid-template-columns: 1fr;
+    }
+}

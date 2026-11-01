@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Dataset & Large Media Files
+data/
+dateset/
+dataset/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Model weights (keep .gitkeep, ignore heavy weights unless explicitly tracked)
+models/*.pt
+models/*.onnx
+models/*.engine
+!models/.gitkeep
+
+# Generated reports & uploads
+reports/*.csv
+reports/*.pdf
+!reports/.gitkeep
+uploads/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
