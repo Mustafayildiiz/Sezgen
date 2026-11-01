@@ -174,8 +174,9 @@ state = SystemState()
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def index():
+    html_content = (TEMPLATES_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html_content)
 
 
 @app.get("/api/health")
@@ -388,3 +389,4 @@ async def download_pdf():
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
