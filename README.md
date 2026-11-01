@@ -4,7 +4,7 @@
 
 ---
 
-## 🖼️ Arayüz Tasarımı (Figma Birebir Uygulama)
+## 🖼️ Arayüz Tasarımı
 
 Operatör ekranı, uçuş kontrol memurunun dikkatini dağıtmayacak şekilde **Aydınlık Tema** ve **Karanlık Tema** seçenekleriyle tasarlanmıştır:
 
@@ -28,33 +28,6 @@ Operatör ekranı, uçuş kontrol memurunun dikkatini dağıtmayacak şekilde **
    - Tespit edilen her yabancı cismin kırpılmış küçük görseli (*thumbnail*), Türkçe sınıf adı, pist sektörü (`Pist 12L` / `Pist 12R`) ve risk derecesi (**Yüksek / Orta / Düşük**) sağ panelde listelenir.
    - Zaman damgalı olay kayıtları **Sistem Günlükleri** paneline otomatik eklenir ve tek tıkla **CSV** veya **PDF** formatında dışa aktarılır.
 5. **Eğitim Grafikleri Paneli:** Model eğitim sürecine ait kayıp (*Loss*) ve doğruluk (*mAP@0.5 / Recall*) eğrilerini çift grafik üzerinde (`models/results.csv` veya varsayılan referans serisi ile) görselleştirir.
-
----
-
-## 📂 Proje Dizin Yapısı
-
-```text
-Sezgen/
-├── assets/figma/            # Figma Aydınlık ve Karanlık tema tasarım referansları
-├── configs/
-│   └── data.yaml            # FOD-A v2.1 (31 sınıf) veri seti yapılandırması
-├── models/                  # Eğitilen YOLO ağırlıkları (best.pt / best.onnx / results.csv)
-├── notebooks/
-│   └── train_colab.ipynb    # YOLO model eğitim Jupyter Notebook dosyası
-├── reports/                 # Dışa aktarılan CSV ve PDF FOD tespit raporları
-├── src/
-│   ├── config.py            # Sistem sabitleri ve varsayılan eşik ayarları
-│   ├── detector.py          # YOLO + SAHI (Derin Tarama) çıkarım ve simülasyon motoru
-│   ├── exporter.py          # CSV ve PDF rapor üretici
-│   ├── risk.py              # 31 FOD sınıfı -> Türkçe etiket, risk seviyesi ve pist eşlemesi
-│   ├── voc_to_yolo.py       # FOD-A Pascal VOC (XML) -> YOLO (.txt) dönüştürücü
-│   └── web/                 # Figma birebir Web Arayüzü (FastAPI + HTML5/CSS3/JS)
-├── Dockerfile               # Konteyner imaj tanımı
-├── docker-compose.yml       # CPU ve GPU (NVIDIA CUDA) destekli servis orkestrasyonu
-├── main.py                  # Ana web sunucusu başlatıcı (Port 8000)
-├── streamlit_app.py         # Alternatif Streamlit arayüzü
-└── requirements.txt         # Python bağımlılıkları
-```
 
 ---
 
