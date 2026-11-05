@@ -7,7 +7,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./src:/app/src
       - ./models:/app/models
       - ./reports:/app/reports
       - ./uploads:/app/uploads
@@ -26,13 +25,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
     container_name: sezgen-fod-gpu
     profiles:
       - gpu
     ports:
       - "8000:8000"
     volumes:
-      - ./src:/app/src
       - ./models:/app/models
       - ./reports:/app/reports
       - ./uploads:/app/uploads

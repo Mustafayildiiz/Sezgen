@@ -131,3 +131,4 @@ def tr_label_of(class_name: str) -> str:
 def runway_sector_of(norm_x: float) -> str:
     """Kare üzerindeki yatay konuma göre pist sektör bilgisini döndürür."""
     return "Pist 12L" if norm_x < 0.5 else "Pist 12R"
+

@@ -23,6 +23,11 @@ models/*.onnx
 models/*.engine
 !models/.gitkeep
 
+# Training runs & checkpoints
+runs/
+yolo*/
+yolo26m_640/
+
 # Generated reports & uploads
 reports/*.csv
 reports/*.pdf
@@ -35,3 +40,4 @@ uploads/
 .DS_Store
 Thumbs.db
 *.log
+

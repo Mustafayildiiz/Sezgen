@@ -1,6 +1,13 @@
-"""Sezgen FastAPI Web Sunucusu ve Gerçek Zamanlı Video İşleme API'si."""
-import base64
+"""Sezgen FastAPI Gerçek Zamanlı Video Analiz, Model Yönetimi ve Raporlama Sunucusu.
+
+Hiçbir sahte/prototip veri içermez:
+- Yalnızca kullanıcının yüklediği/seçtiği gerçek video, görsel veya RTSP kaynağını oynatır.
+- Yalnızca models/ altındaki veya arayüzden yüklenen gerçek YOLO (.pt / .onnx) modeli ile tespit yapar.
+- Bulunan Eşyalar, Sistem Günlükleri ve Eğitim Grafikleri tamamen gerçek çalışma verilerinden beslenir.
+"""
 import csv
+import shutil
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -9,36 +16,59 @@ from typing import Any, Deque, Dict, List, Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from src.config import (
-    DEFAULT_ALARM_THRESHOLD,
-    DEFAULT_CAMERA_LABEL,
-    DEFAULT_CONF_THRESHOLD,
-    DEFAULT_IOU_THRESHOLD,
     MODELS_DIR,
     RESULTS_CSV_PATH,
     UPLOADS_DIR,
 )
-from src.detector import FODDetector
+from src.detector import FODDetector, list_available_models
 from src.exporter import export_detections_csv, export_detections_pdf
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
+VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+MODEL_EXTS = {".pt", ".onnx"}
+
 app = FastAPI(
-    title="Sezgen - Havalimanı Pist FOD Tespit Sistemi",
-    description="Derin öğrenme (YOLO + SAHI) tabanlı gerçek zamanlı yabancı cisim (FOD) tespit ve izleme paneli.",
-    version="1.0.0",
+    title="Sezgen — Havalimanı Pist FOD Tespit Sistemi",
+    description="YOLOv26 + SAHI tabanlı gerçek zamanlı yabancı cisim (FOD) analiz sistemi.",
+    version="2.0.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def _format_seconds(sec: float) -> str:
+    if sec < 0 or not np.isfinite(sec):
+        return "00:00.0"
+    mins = int(sec // 60)
+    rem = sec - mins * 60
+    return f"{mins:02d}:{rem:04.1f}"
+
+
+def list_uploaded_media() -> List[Dict[str, Any]]:
+    """uploads/ klasöründeki gerçek video ve görsel dosyalarını listeler."""
+    items: List[Dict[str, Any]] = []
+    if not UPLOADS_DIR.exists():
+        return items
+    for p in sorted(UPLOADS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if p.is_file() and p.suffix.lower() in (VIDEO_EXTS | IMAGE_EXTS):
+            size_mb = round(p.stat().st_size / (1024 * 1024), 2)
+            mtype = "video" if p.suffix.lower() in VIDEO_EXTS else "image"
+            items.append({
+                "name": p.name,
+                "type": mtype,
+                "size_mb": size_mb,
+            })
+    return items
 
 
 class SettingsPayload(BaseModel):
@@ -46,128 +76,466 @@ class SettingsPayload(BaseModel):
     iou: Optional[float] = None
     alarm: Optional[float] = None
     deep_scan: Optional[bool] = None
-    running: Optional[bool] = None
-    source_type: Optional[str] = None  # "simulation", "file", "webcam", "rtsp"
-    rtsp_url: Optional[str] = None
+    imgsz: Optional[int] = None
+    loop_video: Optional[bool] = None
+
+
+class SelectModelPayload(BaseModel):
+    model_name: str
+
+
+class SelectMediaPayload(BaseModel):
+    filename: str
+
+
+class RtspPayload(BaseModel):
+    url: str
+
+
+class SeekPayload(BaseModel):
+    frame_idx: int
 
 
 class SystemState:
-    """Uygulama çalışma zamanı durumu, loglar ve tespit geçmişi."""
+    """Gerçek zamanlı video akışı, YOLO çıkarımı, tespit geçmişi ve sistem günlükleri yöneticisi."""
 
     def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.frame_cond = threading.Condition()
+
         self.detector = FODDetector()
-        self.running: bool = False
-        self.source_type: str = "simulation"
-        self.uploaded_file: Optional[Path] = None
+
+        # Medya / Oynatıcı durumu
+        self.media_loaded: bool = False
+        self.media_type: str = "none"  # "none" | "video" | "image" | "stream"
+        self.source_name: str = ""
+        self.media_path: Optional[Path] = None
         self.rtsp_url: str = ""
-        self.camera_label: str = DEFAULT_CAMERA_LABEL
-        self.current_fps: float = 28.5
+
+        self.video_width: int = 0
+        self.video_height: int = 0
+        self.native_fps: float = 25.0
+        self.total_frames: int = 0
+        self.duration_sec: float = 0.0
+        self.current_frame_idx: int = 0
+        self.current_video_time: str = "00:00.0"
+
+        self.running: bool = False
+        self.loop_video: bool = False
+        self.processing_fps: float = 0.0
         self.alarm_active: bool = False
+        self.current_frame_detections: int = 0
 
-        # Figma tasarımındaki başlangıç Sistem Günlükleri
-        self.logs: Deque[Dict[str, str]] = deque(maxlen=150)
-        self.logs.append({"time": "12:00:00", "message": "Sistem başlatıldı.", "level": "info"})
-        self.logs.append({"time": "12:00:05", "message": "Video akışı alındı.", "level": "info"})
-        self.logs.append({"time": "12:00:10", "message": "FOD tespiti yapıldı.", "level": "alarm"})
-
-        # Figma tasarımındaki başlangıç Bulunan Eşyalar listesi
-        thumbs = self.detector.default_thumbs
-        self.found_items: List[Dict[str, Any]] = [
-            {
-                "timestamp": "12:00:10",
-                "class_name": "MetalPart",
-                "tr_label": "Metal Parça",
-                "sector": "Pist 12L",
-                "confidence": 0.91,
-                "risk": "Yüksek",
-                "bbox": [380, 430, 424, 462],
-                "mode": "Canlı Akış",
-                "is_alarm": True,
-                "thumbnail": thumbs.get("MetalPart", ""),
-            },
-            {
-                "timestamp": "12:00:10",
-                "class_name": "PlasticPart",
-                "tr_label": "Plastik Parça",
-                "sector": "Pist 12R",
-                "confidence": 0.78,
-                "risk": "Orta",
-                "bbox": [536, 514, 576, 550],
-                "mode": "Canlı Akış",
-                "is_alarm": False,
-                "thumbnail": thumbs.get("PlasticPart", ""),
-            },
-        ]
-        self.detection_history: List[Dict[str, Any]] = list(self.found_items)
         self._cap: Optional[cv2.VideoCapture] = None
-        self._last_log_ts: float = 0.0
+        self._raw_image: Optional[np.ndarray] = None
+        self._last_jpeg: bytes = b""
+        self._frame_seq: int = 0
+
+        # Gerçek Sistem Günlükleri ve Bulunan Eşyalar (Başlangıçta temiz!)
+        self.logs: Deque[Dict[str, str]] = deque(maxlen=300)
+        self.found_items: List[Dict[str, Any]] = []
+        self.detection_history: List[Dict[str, Any]] = []
+        self._recent_det_cache: Dict[str, float] = {}
+        self._tracks: List[Dict[str, Any]] = []
+        self._deep_forced: bool = False
+        self._deep_prior: bool = False
+
+        # Gerçek başlangıç günlük kaydı
+        self.add_log(f"Sistem başlatıldı. Hesaplama birimi: {self.detector.device_label}", "info")
+        if self.detector.model_loaded:
+            self.add_log(
+                f"Model hazır: {self.detector.model_path.name} ({len(self.detector.class_names)} sınıf)",
+                "info",
+            )
+        else:
+            self.add_log(
+                "Henüz aktif model yok. Model Ayarları bölümünden best.pt (.pt / .onnx) yükleyin.",
+                "warn",
+            )
+
+        # Arka plan video işleme iş parçacığı
+        self._stop_worker = False
+        self._worker = threading.Thread(target=self._playback_worker, daemon=True)
+        self._worker.start()
 
     def add_log(self, message: str, level: str = "info") -> None:
         now_t = datetime.now().strftime("%H:%M:%S")
         self.logs.append({"time": now_t, "message": message, "level": level})
 
+    def enforce_mode_for_media(self, media_type: str) -> None:
+        """Görsel girdide Canlı Akış kapalıdır: yalnızca Derin Tarama kullanılabilir.
+        Video / akış girdisinde kullanıcının önceki tercihi geri yüklenir."""
+        det = self.detector
+        if media_type == "image":
+            if not self._deep_forced:
+                self._deep_prior = det.deep_scan
+                self._deep_forced = True
+            det.deep_scan = True
+        elif self._deep_forced:
+            det.deep_scan = self._deep_prior
+            self._deep_forced = False
+
     def release_capture(self) -> None:
-        if self._cap is not None:
-            try:
-                self._cap.release()
-            except Exception:
-                pass
-            self._cap = None
+        with self.lock:
+            if self._cap is not None:
+                try:
+                    self._cap.release()
+                except Exception:
+                    pass
+                self._cap = None
 
-    def get_next_frame(self) -> np.ndarray:
-        """Seçili kaynaktan (dosya, kamera/RTSP veya simülasyon) sıradaki kareyi okur."""
-        if self.source_type == "file" and self.uploaded_file and self.uploaded_file.exists():
-            suffix = self.uploaded_file.suffix.lower()
-            if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
-                data = np.fromfile(str(self.uploaded_file), dtype=np.uint8)
-                img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-                if img is not None:
-                    return img
-            else:
-                if self._cap is None or not self._cap.isOpened():
-                    self._cap = cv2.VideoCapture(str(self.uploaded_file))
-                ok, frame = self._cap.read()
-                if not ok:
-                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ok, frame = self._cap.read()
-                if ok and frame is not None:
-                    return frame
+    def _publish_frame(self, bgr_frame: np.ndarray) -> None:
+        ok, buf = cv2.imencode(".jpg", bgr_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if ok:
+            with self.frame_cond:
+                self._last_jpeg = buf.tobytes()
+                self._frame_seq += 1
+                self.frame_cond.notify_all()
 
-        elif self.source_type in {"webcam", "rtsp"}:
-            target: Any = 0 if self.source_type == "webcam" else self.rtsp_url
-            if self._cap is None or not self._cap.isOpened():
-                self._cap = cv2.VideoCapture(target)
-            ok, frame = self._cap.read()
-            if ok and frame is not None:
-                return frame
-
-        return self.detector.render_synthetic_runway(width=960, height=720)
-
-    def step_frame(self) -> np.ndarray:
-        """Bir kare alır, çalışıyorsa YOLO/SAHI tespitini uygular ve durum tablolarını günceller."""
-        raw_frame = self.get_next_frame()
-        if not self.running:
-            return raw_frame
-
-        annotated, detections, fps = self.detector.detect_frame(raw_frame)
-        self.current_fps = fps
+    def _record_detections(self, detections: List[Dict[str, Any]]) -> None:
+        """Aynı kare/saniyedeki mükerrer kayıtları akıllıca süzerek gerçek tespitleri kaydeder."""
+        self.current_frame_detections = len(detections)
         self.alarm_active = any(d.get("is_alarm", False) for d in detections)
+        if not detections:
+            return
 
-        if detections:
-            self.found_items = detections[:12]
-            now = time.time()
-            if now - self._last_log_ts >= 2.5:
-                self._last_log_ts = now
-                top = detections[0]
+        # Aynı fiziksel nesneyi (aynı sınıf + yüksek IoU) kareler boyunca TEK kayıt olarak izle.
+        # Böylece tek bir cisim 70 kare görünse bile sayaç 1 kalır.
+        for d in detections:
+            track = self._match_track(d)
+            if track is not None:
+                track["bbox"] = d["bbox"]
+                track["last_frame"] = d["frame_idx"]
+                # Daha yüksek güvenli kareyi temsilci kayıt yap
+                if d["confidence"] > track["item"]["confidence"]:
+                    idx = next((i for i, it in enumerate(self.found_items) if it is track["item"]), None)
+                    hidx = next((i for i, it in enumerate(self.detection_history) if it is track["item"]), None)
+                    track["item"] = d
+                    if idx is not None:
+                        self.found_items[idx] = d
+                    if hidx is not None:
+                        self.detection_history[hidx] = d
+                continue
+
+            self._tracks.append({"class": d["class_name"], "bbox": d["bbox"],
+                                 "last_frame": d["frame_idx"], "item": d})
+            self.found_items.insert(0, d)
+            if len(self.found_items) > 60:
+                self.found_items = self.found_items[:60]
+            if len(self.detection_history) < 5000:
+                self.detection_history.append(d)
+            self.add_log(
+                f"[Kare #{d['frame_idx']} | {d['video_time']}] Yeni FOD: "
+                f"{d['tr_label']} (%{d['confidence'] * 100:.1f} - Risk: {d['risk']}) "
+                f"Konum: {d['bbox']}",
+                level="alarm" if d.get("is_alarm") else "warn",
+            )
+
+    @staticmethod
+    def _iou(a: List[int], b: List[int]) -> float:
+        iw = min(a[2], b[2]) - max(a[0], b[0])
+        ih = min(a[3], b[3]) - max(a[1], b[1])
+        if iw <= 0 or ih <= 0:
+            return 0.0
+        inter = iw * ih
+        ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / ua if ua > 0 else 0.0
+
+    def _match_track(self, d: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        max_gap = max(30, int(self.native_fps * 2))
+        best, best_iou = None, 0.3
+        for t in self._tracks:
+            if t["class"] != d["class_name"]:
+                continue
+            if abs(d["frame_idx"] - t["last_frame"]) > max_gap:
+                continue
+            v = self._iou(t["bbox"], d["bbox"])
+            if v >= best_iou:
+                best, best_iou = t, v
+        return best
+
+    def reset_detections(self) -> None:
+        self.found_items.clear()
+        self.detection_history.clear()
+        self._tracks.clear()
+        self._recent_det_cache.clear()
+        self.current_frame_detections = 0
+        self.alarm_active = False
+
+    def load_media_file(self, file_path: Path) -> Dict[str, Any]:
+        """Yüklenen gerçek video veya görsel dosyasını açar, meta verilerini okur ve ilk kareyi hazırlar."""
+        if not file_path.exists():
+            raise FileNotFoundError(f"Dosya bulunamadı: {file_path.name}")
+
+        suffix = file_path.suffix.lower()
+        with self.lock:
+            self.running = False
+            self.release_capture()
+            self._raw_image = None
+            self.alarm_active = False
+            self.reset_detections()
+
+            self.enforce_mode_for_media("image" if suffix in IMAGE_EXTS else "video")
+
+            if suffix in IMAGE_EXTS:
+                raw_bytes = np.fromfile(str(file_path), dtype=np.uint8)
+                img = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError("Görsel dosyası okunamadı veya bozuk.")
+
+                h, w = img.shape[:2]
+                self.media_loaded = True
+                self.media_type = "image"
+                self.source_name = file_path.name
+                self.media_path = file_path
+                self.video_width, self.video_height = w, h
+                self.native_fps = 0.0
+                self.total_frames = 1
+                self.duration_sec = 0.0
+                self.current_frame_idx = 1
+                self.current_video_time = "Görsel"
+                self._raw_image = img
+
+                self.add_log(f"Görsel yüklendi: {file_path.name} ({w}x{h})", "info")
+                if self.detector.model_loaded:
+                    self.analyze_current_image()
+                else:
+                    self._publish_frame(img)
+                    self.add_log(
+                        "Görsel önizlemede. FOD tespiti yapmak için Model Ayarları'ndan best.pt yükleyin.",
+                        "warn",
+                    )
+
+            elif suffix in VIDEO_EXTS:
+                cap = cv2.VideoCapture(str(file_path))
+                if not cap.isOpened():
+                    raise ValueError("Video dosyası açılamadı (desteklenmeyen kodek veya bozuk dosya).")
+
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
+                if fps <= 0 or fps > 240:
+                    fps = 25.0
+                total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                dur = total / fps if total > 0 else 0.0
+
+                ok, first_frame = cap.read()
+                if not ok or first_frame is None:
+                    cap.release()
+                    raise ValueError("Videodan ilk kare okunamadı.")
+
+                # Başa geri sar ki Başla'ya basıldığında 0. kareden başlasın
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+                self._cap = cap
+                self.media_loaded = True
+                self.media_type = "video"
+                self.source_name = file_path.name
+                self.media_path = file_path
+                self.video_width, self.video_height = w, h
+                self.native_fps = round(fps, 2)
+                self.total_frames = total
+                self.duration_sec = round(dur, 2)
+                self.current_frame_idx = 0
+                self.current_video_time = "00:00.0"
+
+                self._publish_frame(first_frame)
                 self.add_log(
-                    f"FOD tespiti yapıldı: {top['tr_label']} ({top['sector']}) - Güven: %{int(top['confidence'] * 100)}",
-                    level="alarm" if top.get("is_alarm") else "warn",
+                    f"Video yüklendi: {file_path.name} ({w}x{h}, {self.native_fps} FPS, "
+                    f"{total} kare, {_format_seconds(dur)})",
+                    "info",
                 )
-                for d in detections:
-                    if len(self.detection_history) < 1000:
-                        self.detection_history.append(d)
+            else:
+                raise ValueError(f"Desteklenmeyen medya uzantısı: {suffix}")
 
-        return annotated
+        return self.to_dict()
+
+    def connect_stream(self, url: str) -> Dict[str, Any]:
+        """Gerçek RTSP IP kamera veya yerel USB kamera (0, 1...) akışına bağlanır."""
+        clean_url = url.strip()
+        target: Any = int(clean_url) if clean_url.isdigit() else clean_url
+
+        with self.lock:
+            self.running = False
+            self.release_capture()
+            self.reset_detections()
+            self.enforce_mode_for_media("stream")
+            cap = cv2.VideoCapture(target)
+            if not cap.isOpened():
+                raise ValueError(f"Kamera / RTSP akışına bağlanılamadı: {clean_url}")
+
+            ok, first_frame = cap.read()
+            if not ok or first_frame is None:
+                cap.release()
+                raise ValueError(f"Akıştan görüntü alınamadı: {clean_url}")
+
+            h, w = first_frame.shape[:2]
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
+            if fps <= 0 or fps > 120:
+                fps = 25.0
+
+            self._cap = cap
+            self.media_loaded = True
+            self.media_type = "stream"
+            self.rtsp_url = clean_url
+            self.source_name = f"Kamera #{clean_url}" if clean_url.isdigit() else clean_url
+            self.video_width, self.video_height = w, h
+            self.native_fps = round(fps, 1)
+            self.total_frames = 0
+            self.duration_sec = 0.0
+            self.current_frame_idx = 1
+            self.current_video_time = "CANLI"
+            self._publish_frame(first_frame)
+            self.add_log(f"Canlı akış bağlandı: {self.source_name} ({w}x{h})", "info")
+
+        return self.to_dict()
+
+    def analyze_current_image(self) -> None:
+        """Yüklü tekil görsel üzerinde gerçek YOLO/SAHI analizini çalıştırır."""
+        with self.lock:
+            if self.media_type != "image" or self._raw_image is None:
+                return
+            if not self.detector.model_loaded:
+                self._publish_frame(self._raw_image)
+                self.add_log("Analiz yapılamadı: Önce best.pt model dosyasını yükleyin.", "warn")
+                return
+
+            annotated, dets, fps = self.detector.detect_frame(
+                self._raw_image,
+                frame_idx=1,
+                video_time_str="Görsel",
+                source_name=self.source_name,
+            )
+            self.processing_fps = fps
+            # Aynı görselin yeniden analizinde (eşik değişimi vb.) sonuçları BİRİKTİRME, değiştir.
+            self.reset_detections()
+            self.found_items = list(dets)
+            self.detection_history = list(dets)
+            self._tracks = [{"class": d["class_name"], "bbox": d["bbox"],
+                             "last_frame": 1, "item": d} for d in dets]
+            self.current_frame_detections = len(dets)
+            self.alarm_active = any(d.get("is_alarm", False) for d in dets)
+            self._publish_frame(annotated)
+            self.add_log(
+                f"Görsel analizi tamamlandı ({self.source_name}): {len(dets)} yabancı cisim tespit edildi.",
+                "alarm" if dets else "info",
+            )
+
+    def process_single_video_frame(self) -> bool:
+        """Videodan sıradaki tek kareyi okur, model yüklüyse tespit yapar ve yayınlar."""
+        with self.lock:
+            if self._cap is None or not self._cap.isOpened():
+                self.running = False
+                return False
+
+            ok, frame = self._cap.read()
+            if not ok or frame is None:
+                if self.media_type == "video" and self.loop_video:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    self.current_frame_idx = 0
+                    ok, frame = self._cap.read()
+                if not ok or frame is None:
+                    self.running = False
+                    self.alarm_active = False
+                    self.add_log(
+                        f"Video sonuna ulaşıldı ({self.current_frame_idx} kare işlendi, "
+                        f"toplam {len(self.detection_history)} FOD kaydı).",
+                        "info",
+                    )
+                    return False
+
+            pos_frame = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES) or (self.current_frame_idx + 1))
+            self.current_frame_idx = pos_frame
+            if self.media_type == "video":
+                t_sec = pos_frame / max(1.0, self.native_fps)
+                self.current_video_time = _format_seconds(t_sec)
+            else:
+                self.current_video_time = datetime.now().strftime("%H:%M:%S")
+
+            if self.detector.model_loaded:
+                annotated, dets, fps = self.detector.detect_frame(
+                    frame,
+                    frame_idx=self.current_frame_idx,
+                    video_time_str=self.current_video_time,
+                    source_name=self.source_name,
+                )
+                self.processing_fps = fps
+                self._record_detections(dets)
+                self._publish_frame(annotated)
+            else:
+                self.processing_fps = self.native_fps
+                self.current_frame_detections = 0
+                self.alarm_active = False
+                self._publish_frame(frame)
+
+            return True
+
+    def seek_video(self, target_frame: int) -> None:
+        """Videoyu belirtilen kare numarasına sarar ve o kareyi analiz edip ekranda gösterir."""
+        with self.lock:
+            if self.media_type != "video" or self._cap is None or not self._cap.isOpened():
+                return
+            clamped = max(0, min(max(0, self.total_frames - 1), int(target_frame)))
+            self._cap.set(cv2.CAP_PROP_POS_FRAMES, clamped)
+            self.current_frame_idx = clamped
+            self.process_single_video_frame()
+
+    def _playback_worker(self) -> None:
+        """Arka planda video oynatma ve gerçek zamanlı çıkarım döngüsü."""
+        while not self._stop_worker:
+            if not self.running or self.media_type not in {"video", "stream"}:
+                time.sleep(0.05)
+                continue
+
+            t_start = time.perf_counter()
+            ok = self.process_single_video_frame()
+            if not ok:
+                time.sleep(0.05)
+                continue
+
+            # Videonun doğal hızından daha hızlı akmaması için kare hızı dengelemesi
+            target_dt = 1.0 / max(1.0, min(60.0, self.native_fps or 25.0))
+            elapsed = time.perf_counter() - t_start
+            if elapsed < target_dt:
+                time.sleep(target_dt - elapsed)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "running": self.running,
+            "loop_video": self.loop_video,
+            "media": {
+                "loaded": self.media_loaded,
+                "type": self.media_type,
+                "source_name": self.source_name,
+                "width": self.video_width,
+                "height": self.video_height,
+                "native_fps": self.native_fps,
+                "total_frames": self.total_frames,
+                "duration_sec": self.duration_sec,
+                "duration_str": _format_seconds(self.duration_sec),
+                "current_frame": self.current_frame_idx,
+                "current_time": self.current_video_time,
+                "frame_seq": self._frame_seq,
+                "uploaded_files": list_uploaded_media(),
+            },
+            "model": self.detector.get_model_info(),
+            "settings": {
+                "conf": int(round(self.detector.conf_threshold * 100)),
+                "iou": int(round(self.detector.iou_threshold * 100)),
+                "alarm": int(round(self.detector.alarm_threshold * 100)),
+                "deep_scan": self.detector.deep_scan,
+                "live_allowed": self.media_type != "image",
+                "imgsz": self.detector.imgsz,
+            },
+            "telemetry": {
+                "processing_fps": self.processing_fps,
+                "alarm_active": self.alarm_active,
+                "current_frame_detections": self.current_frame_detections,
+                "total_detections": len(self.detection_history),
+            },
+            "logs": list(self.logs),
+            "found_items": self.found_items,
+        }
 
 
 state = SystemState()
@@ -185,187 +553,407 @@ async def health():
         "status": "ok",
         "service": "sezgen-fod-detector",
         "model_loaded": state.detector.model_loaded,
-        "model_status": state.detector.model_status,
+        "media_loaded": state.media_loaded,
     }
 
 
 @app.get("/api/state")
 async def get_state():
-    return {
-        "running": state.running,
-        "source_type": state.source_type,
-        "uploaded_file": state.uploaded_file.name if state.uploaded_file else None,
-        "camera_label": state.camera_label,
-        "conf": int(round(state.detector.conf_threshold * 100)),
-        "iou": int(round(state.detector.iou_threshold * 100)),
-        "alarm": int(round(state.detector.alarm_threshold * 100)),
-        "deep_scan": state.detector.deep_scan,
-        "fps": state.current_fps,
-        "alarm_active": state.alarm_active,
-        "model_loaded": state.detector.model_loaded,
-        "model_status": state.detector.model_status,
-        "logs": list(state.logs),
-        "found_items": state.found_items,
-        "total_detections": len(state.detection_history),
-    }
+    return state.to_dict()
 
 
 @app.post("/api/settings")
 async def update_settings(payload: SettingsPayload):
-    if payload.conf is not None or payload.iou is not None or payload.alarm is not None or payload.deep_scan is not None:
-        prev_mode = state.detector.deep_scan
-        state.detector.update_settings(
-            conf=payload.conf / 100.0 if payload.conf is not None and payload.conf > 1.0 else payload.conf,
-            iou=payload.iou / 100.0 if payload.iou is not None and payload.iou > 1.0 else payload.iou,
-            alarm=payload.alarm / 100.0 if payload.alarm is not None and payload.alarm > 1.0 else payload.alarm,
-            deep_scan=payload.deep_scan,
-        )
-        if payload.deep_scan is not None and payload.deep_scan != prev_mode:
-            mode_str = "Derin Tarama (SAHI)" if payload.deep_scan else "Canlı Akış"
-            state.add_log(f"Tarama modu değiştirildi: {mode_str}", level="info")
+    prev_deep = state.detector.deep_scan
+    prev_imgsz = state.detector.imgsz
 
-    if payload.source_type is not None:
-        state.source_type = payload.source_type
-        state.release_capture()
-        state.add_log(f"Giriş kaynağı seçildi: {payload.source_type}", level="info")
+    # Görsel girdide Canlı Akış kullanılamaz: Derin Tarama zorunlu.
+    if state.media_type == "image" and payload.deep_scan is False:
+        payload.deep_scan = True
+        state.add_log("Görsel girdide Canlı Akış kapalı; Derin Tarama kullanılıyor.", "warn")
 
-    if payload.rtsp_url is not None:
-        state.rtsp_url = payload.rtsp_url.strip()
-        if state.rtsp_url:
-            state.source_type = "rtsp"
-            state.release_capture()
-            state.add_log(f"RTSP akışı bağlandı: {state.rtsp_url}", level="info")
+    state.detector.update_settings(
+        conf=payload.conf / 100.0 if payload.conf is not None and payload.conf > 1.0 else payload.conf,
+        iou=payload.iou / 100.0 if payload.iou is not None and payload.iou > 1.0 else payload.iou,
+        alarm=payload.alarm / 100.0 if payload.alarm is not None and payload.alarm > 1.0 else payload.alarm,
+        deep_scan=payload.deep_scan,
+        imgsz=payload.imgsz,
+    )
 
-    if payload.running is not None:
-        state.running = bool(payload.running)
-        if state.running:
-            state.detector.try_load_model()
-            state.add_log("Tarama başlatıldı. Video akışı işleniyor.", level="info")
-        else:
-            state.alarm_active = False
-            state.add_log("Tarama duraklatıldı.", level="info")
+    if payload.loop_video is not None:
+        state.loop_video = bool(payload.loop_video)
 
-    return await get_state()
+    if payload.deep_scan is not None and payload.deep_scan != prev_deep:
+        m_txt = "Derin Tarama (SAHI)" if state.detector.deep_scan else "Canlı Akış"
+        state.add_log(f"Tarama modu güncellendi: {m_txt}", "info")
+
+    if payload.imgsz is not None and state.detector.imgsz != prev_imgsz:
+        state.add_log(f"Çıkarım çözünürlüğü (imgsz) güncellendi: {state.detector.imgsz}px", "info")
+
+    # Eğer ekranda tekil bir görsel açıksa veya video duraklatılmışsa anında mevcut kareyi yeni eşiklerle güncelle
+    if state.media_loaded and state.media_type == "image" and state.detector.model_loaded:
+        state.analyze_current_image()
+
+    return state.to_dict()
 
 
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.post("/api/upload/media")
+async def upload_media(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Dosya adı geçersiz.")
 
     safe_name = Path(file.filename).name
     suffix = Path(safe_name).suffix.lower()
-    content = await file.read()
-
-    # Kullanıcı model ağırlığı (.pt / .onnx) yüklerse models/ altına kaydet ve yükle
-    if suffix in {".pt", ".onnx"}:
-        dst = MODELS_DIR / safe_name
-        dst.write_bytes(content)
-        loaded = state.detector.try_load_model(dst)
-        state.add_log(
-            f"Model ağırlığı yüklendi: {safe_name} ({'Aktif' if loaded else 'Hata'})",
-            level="info" if loaded else "warn",
+    if suffix not in (VIDEO_EXTS | IMAGE_EXTS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Desteklenmeyen dosya türü ({suffix}). Lütfen video (.mp4, .avi, .mov, .mkv) veya görsel (.jpg, .png) yükleyin.",
         )
-        return {"status": "ok", "type": "model", "filename": safe_name, "loaded": loaded}
 
-    # Kullanıcı YOLO eğitim sonuçları (results.csv) yüklerse
-    if suffix == ".csv":
-        RESULTS_CSV_PATH.write_bytes(content)
-        state.add_log(f"Eğitim metrik dosyası güncellendi: {safe_name}", level="info")
-        return {"status": "ok", "type": "metrics", "filename": safe_name}
-
-    # Video veya görsel dosyası
     dst = UPLOADS_DIR / safe_name
-    dst.write_bytes(content)
-    state.release_capture()
-    state.uploaded_file = dst
-    state.source_type = "file"
-    state.running = True
-    state.add_log(f"Medya dosyası yüklendi: {safe_name}", level="info")
-    state.add_log("Video akışı alındı.", level="info")
+    with dst.open("wb") as out_f:
+        shutil.copyfileobj(file.file, out_f)
 
-    return {"status": "ok", "type": "media", "filename": safe_name}
-
-
-@app.get("/api/frame")
-async def get_single_frame():
-    """Tekil işlenmiş kareyi base64 JPEG ve güncel durumla birlikte döndürür."""
-    frame = state.step_frame()
-    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-    b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
-    st = await get_state()
-    st["frame"] = f"data:image/jpeg;base64,{b64}"
-    return JSONResponse(st)
+    try:
+        return state.load_media_file(dst)
+    except Exception as exc:
+        state.add_log(f"Medya yükleme hatası ({safe_name}): {exc}", "alarm")
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
-def _mjpeg_generator():
+@app.post("/api/media/select")
+async def select_existing_media(payload: SelectMediaPayload):
+    target = UPLOADS_DIR / Path(payload.filename).name
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Seçilen medya dosyası bulunamadı.")
+    try:
+        return state.load_media_file(target)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/media/rtsp")
+async def connect_rtsp_or_camera(payload: RtspPayload):
+    if not payload.url.strip():
+        raise HTTPException(status_code=400, detail="RTSP adresi veya kamera numarası boş olamaz.")
+    try:
+        return state.connect_stream(payload.url)
+    except Exception as exc:
+        state.add_log(f"Akış bağlantı hatası: {exc}", "alarm")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/upload/model")
+async def upload_model(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Model dosya adı geçersiz.")
+
+    safe_name = Path(file.filename).name
+    suffix = Path(safe_name).suffix.lower()
+    if suffix not in MODEL_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="Yalnızca Ultralytics YOLO .pt (örn. best.pt) veya .onnx model dosyaları yüklenebilir.",
+        )
+
+    dst = MODELS_DIR / safe_name
+    with dst.open("wb") as out_f:
+        shutil.copyfileobj(file.file, out_f)
+
+    ok, msg = state.detector.load_model(dst)
+    state.add_log(msg, "info" if ok else "alarm")
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # Eğer bir görsel yüklüyse yeni modelle hemen analiz et
+    if state.media_loaded and state.media_type == "image":
+        state.analyze_current_image()
+
+    return state.to_dict()
+
+
+@app.post("/api/model/select")
+async def select_model(payload: SelectModelPayload):
+    target = MODELS_DIR / Path(payload.model_name).name
+    ok, msg = state.detector.load_model(target)
+    state.add_log(msg, "info" if ok else "alarm")
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    if state.media_loaded and state.media_type == "image":
+        state.analyze_current_image()
+    return state.to_dict()
+
+
+@app.post("/api/model/refresh")
+async def refresh_models():
+    """models/ klasörüne dışarıdan kopyalanan best.pt dosyasını tarar ve henüz model yüklü değilse yükler."""
+    models = list_available_models()
+    if not state.detector.model_loaded and models:
+        best_candidate = next((m for m in models if m["name"] == "best.pt"), models[0])
+        ok, msg = state.detector.load_model(Path(best_candidate["path"]))
+        state.add_log(msg, "info" if ok else "warn")
+    else:
+        state.add_log(f"Model klasörü tarandı ({len(models)} model dosyası bulundu).", "info")
+    return state.to_dict()
+
+
+@app.post("/api/upload/metrics")
+async def upload_training_metrics(file: UploadFile = File(...)):
+    if not file.filename or Path(file.filename).suffix.lower() != ".csv":
+        raise HTTPException(status_code=400, detail="Lütfen YOLO eğitim çıktısı olan results.csv dosyasını seçin.")
+
+    with RESULTS_CSV_PATH.open("wb") as out_f:
+        shutil.copyfileobj(file.file, out_f)
+
+    state.add_log(f"Gerçek eğitim metrikleri yüklendi: {file.filename}", "info")
+    return await get_training_metrics()
+
+
+@app.post("/api/control/toggle")
+async def control_toggle():
+    if not state.media_loaded:
+        state.add_log("Başlatılamadı: Önce analiz edilecek video veya görsel yükleyin.", "warn")
+        raise HTTPException(status_code=400, detail="Lütfen önce bir video veya görsel yükleyin.")
+
+    if state.media_type == "image":
+        state.analyze_current_image()
+        return state.to_dict()
+
+    with state.lock:
+        # Video sonuna gelmişse ve tekrar Başla'ya basıldıysa otomatik başa sar
+        if not state.running and state.media_type == "video" and state.total_frames > 0:
+            if state.current_frame_idx >= state.total_frames - 1 and state._cap is not None:
+                state._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                state.current_frame_idx = 0
+
+        state.running = not state.running
+        if state.running:
+            if state.detector.model_loaded:
+                state.add_log(
+                    f"Analiz başlatıldı: {state.source_name} | Model: {state.detector.model_path.name}",
+                    "info",
+                )
+            else:
+                state.add_log(
+                    f"Video oynatılıyor ({state.source_name}) — Uyarı: Model yüklü olmadığı için FOD tespiti yapılmıyor.",
+                    "warn",
+                )
+        else:
+            state.alarm_active = False
+            state.add_log(f"Video duraklatıldı (Kare #{state.current_frame_idx}).", "info")
+
+    return state.to_dict()
+
+
+@app.post("/api/control/restart")
+async def control_restart():
+    if not state.media_loaded:
+        raise HTTPException(status_code=400, detail="Yüklü medya yok.")
+    with state.lock:
+        state.running = False
+        state.alarm_active = False
+        if state.media_type == "video":
+            state.seek_video(0)
+            state.add_log(f"Video başa sarıldı: {state.source_name}", "info")
+        elif state.media_type == "image":
+            state.analyze_current_image()
+    return state.to_dict()
+
+
+@app.post("/api/control/step")
+async def control_step_frame():
+    """Duraklatılmış videoda tek kare ileri gider ve o kareyi analiz eder."""
+    if not state.media_loaded or state.media_type != "video":
+        raise HTTPException(status_code=400, detail="Kare adımlama yalnızca video dosyalarında kullanılabilir.")
+    with state.lock:
+        state.running = False
+        state.process_single_video_frame()
+    return state.to_dict()
+
+
+@app.post("/api/control/seek")
+async def control_seek(payload: SeekPayload):
+    if not state.media_loaded or state.media_type != "video":
+        raise HTTPException(status_code=400, detail="Konumlandırma yalnızca video dosyalarında kullanılabilir.")
+    with state.lock:
+        state.running = False
+        state.seek_video(payload.frame_idx)
+    return state.to_dict()
+
+
+@app.post("/api/detections/clear")
+async def clear_detections():
+    with state.lock:
+        state.reset_detections()
+        state.add_log("Bulunan eşyalar listesi temizlendi.", "info")
+    return state.to_dict()
+
+
+@app.post("/api/logs/clear")
+async def clear_logs():
+    state.logs.clear()
+    state.add_log("Sistem günlükleri temizlendi.", "info")
+    return state.to_dict()
+
+
+@app.get("/api/snapshot")
+async def get_snapshot():
+    """En son işlenen gerçek video/görsel karesini JPEG olarak döndürür."""
+    if not state._last_jpeg:
+        return Response(status_code=204)
+    return Response(
+        content=state._last_jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+def _mjpeg_stream_generator():
+    last_sent_seq = -1
     while True:
-        frame = state.step_frame()
-        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
-        if ok:
+        with state.frame_cond:
+            if state._frame_seq == last_sent_seq:
+                state.frame_cond.wait(timeout=0.5)
+            jpeg_bytes = state._last_jpeg
+            curr_seq = state._frame_seq
+
+        if jpeg_bytes and curr_seq != last_sent_seq:
+            last_sent_seq = curr_seq
             yield (
                 b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
             )
-        time.sleep(0.04)  # ~25 FPS
+        elif not state.running:
+            time.sleep(0.08)
 
 
 @app.get("/api/stream")
 async def video_stream():
     return StreamingResponse(
-        _mjpeg_generator(),
+        _mjpeg_stream_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
+
+
+def _parse_metrics_rows(columns_dict: Dict[str, List[float]], source_label: str) -> Dict[str, Any]:
+    """Ultralytics results.csv veya best.pt train_results sözlüğünü gerçek grafik serilerine dönüştürür."""
+    def _pick(*candidates: str) -> List[float]:
+        for c in candidates:
+            if c in columns_dict and columns_dict[c]:
+                return [round(float(v), 5) for v in columns_dict[c]]
+        return []
+
+    t_box = _pick("train/box_loss", "box_loss")
+    v_box = _pick("val/box_loss")
+    t_cls = _pick("train/cls_loss", "cls_loss")
+    v_cls = _pick("val/cls_loss")
+    t_dfl = _pick("train/dfl_loss", "dfl_loss")
+
+    map50 = _pick("metrics/mAP50(B)", "metrics/mAP_0.5", "mAP50")
+    map50_95 = _pick("metrics/mAP50-95(B)", "metrics/mAP_0.5:0.95", "mAP50-95")
+    precision = _pick("metrics/precision(B)", "metrics/precision", "precision")
+    recall = _pick("metrics/recall(B)", "metrics/recall", "recall")
+
+    n = max(
+        len(t_box), len(v_box), len(t_cls), len(map50), len(recall), 0
+    )
+    if n == 0:
+        return {"available": False}
+
+    raw_epochs = columns_dict.get("epoch", [])
+    if len(raw_epochs) == n:
+        epochs = [int(round(e)) for e in raw_epochs]
+    else:
+        epochs = list(range(1, n + 1))
+
+    loss_series = []
+    if t_box:
+        loss_series.append({"name": "Train Box Loss", "color": "#1565c0", "data": t_box})
+    if v_box:
+        loss_series.append({"name": "Val Box Loss", "color": "#ef4444", "data": v_box})
+    if t_cls:
+        loss_series.append({"name": "Train Cls Loss", "color": "#0ea5e9", "data": t_cls})
+    if v_cls:
+        loss_series.append({"name": "Val Cls Loss", "color": "#f59e0b", "data": v_cls})
+    if not loss_series and t_dfl:
+        loss_series.append({"name": "Train DFL Loss", "color": "#1565c0", "data": t_dfl})
+
+    metric_series = []
+    if map50:
+        metric_series.append({"name": "mAP@0.5", "color": "#1565c0", "data": [round(v * 100, 2) for v in map50]})
+    if recall:
+        metric_series.append({"name": "Recall", "color": "#10b981", "data": [round(v * 100, 2) for v in recall]})
+    if precision:
+        metric_series.append({"name": "Precision", "color": "#f59e0b", "data": [round(v * 100, 2) for v in precision]})
+    if map50_95:
+        metric_series.append({"name": "mAP@0.5:0.95", "color": "#78879b", "data": [round(v * 100, 2) for v in map50_95]})
+
+    return {
+        "available": True,
+        "source": source_label,
+        "epochs": epochs,
+        "summary": {
+            "total_epochs": len(epochs),
+            "best_map50": round(max(map50) * 100, 2) if map50 else None,
+            "best_map50_95": round(max(map50_95) * 100, 2) if map50_95 else None,
+            "best_recall": round(max(recall) * 100, 2) if recall else None,
+            "best_precision": round(max(precision) * 100, 2) if precision else None,
+            "min_val_box_loss": round(min(v_box), 4) if v_box else (round(min(t_box), 4) if t_box else None),
+        },
+        "loss_chart": {
+            "title": "Kayıp Eğrileri (Box & Cls Loss)",
+            "unit": "",
+            "series": loss_series,
+        },
+        "metrics_chart": {
+            "title": "Doğruluk Metrikleri (mAP@0.5, Recall, Precision %)",
+            "unit": "%",
+            "y_min": 0,
+            "y_max": 100,
+            "series": metric_series,
+        },
+    }
 
 
 @app.get("/api/training-metrics")
 async def get_training_metrics():
-    """Eğitim Grafikleri paneli için results.csv varsa gerçek veriyi, yoksa Figma referans serisini döndürür."""
+    """Yalnızca gerçek YOLO eğitim verilerini (models/results.csv veya best.pt içi kayıt) döndürür."""
+    # 1. Öncelik: models/results.csv dosyası
     if RESULTS_CSV_PATH.exists():
         try:
             with RESULTS_CSV_PATH.open("r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                epochs, train_series, val_series, map_series, recall_series = [], [], [], [], []
-                for idx, row in enumerate(reader):
-                    clean = {k.strip(): v.strip() for k, v in row.items() if k}
-                    epochs.append(clean.get("epoch", str(idx + 1)))
-                    t_loss = float(clean.get("train/box_loss", 0.0)) * 500
-                    v_loss = float(clean.get("val/box_loss", 0.0)) * 500
-                    m50 = float(clean.get("metrics/mAP50(B)", 0.0)) * 1000
-                    rec = float(clean.get("metrics/recall(B)", 0.0)) * 1000
-                    train_series.append(round(t_loss, 1))
-                    val_series.append(round(v_loss, 1))
-                    map_series.append(round(m50, 1))
-                    recall_series.append(round(rec, 1))
-                if epochs:
-                    return {
-                        "source": "results.csv",
-                        "labels": epochs,
-                        "chart1": {"blue": train_series, "grey": val_series, "title": "Box Loss (Train vs Val)"},
-                        "chart2": {"blue": map_series, "grey": recall_series, "title": "mAP@0.5 vs Recall"},
-                    }
+                cols: Dict[str, List[float]] = {}
+                for row in reader:
+                    for k, v in row.items():
+                        if not k or v is None:
+                            continue
+                        ck = k.strip()
+                        try:
+                            val = float(v.strip())
+                            cols.setdefault(ck, []).append(val)
+                        except ValueError:
+                            continue
+                parsed = _parse_metrics_rows(cols, "models/results.csv")
+                if parsed.get("available"):
+                    return parsed
         except Exception:
             pass
 
-    # Figma tasarımındaki ikili grafik eğrisiyle birebir örtüşen varsayılan veri serisi (0 - 1200 ölçekli)
-    blue_line = [
-        925, 925, 845, 765, 920, 810, 625, 620, 815, 730, 520, 535, 860, 740, 845, 780, 645, 595,
-        705, 895, 855, 890, 795, 975, 880, 935, 850, 875, 920, 875, 955, 860, 780, 890, 800, 725,
-        825, 790, 795, 730, 740, 685, 710, 795, 745, 860, 810, 600, 775, 745, 845, 750, 665, 575,
-        620, 840, 705, 735, 675, 620, 550, 560, 635, 480, 555, 485, 675, 385, 225, 305, 510, 445, 415
-    ]
-    grey_line = [
-        1100, 1065, 815, 770, 1020, 890, 695, 995, 860, 715, 515, 790, 980, 675, 915, 700, 620, 635,
-        1005, 875, 960, 845, 1035, 925, 970, 885, 995, 845, 975, 850, 985, 905, 825, 915, 1050, 815,
-        925, 760, 890, 770, 935, 685, 695, 950, 915, 760, 750, 610, 920, 835, 745, 710, 590, 395,
-        940, 725, 885, 880, 665, 615, 540, 565, 715, 550, 755, 535, 805, 260, 155, 290, 600, 415, 475
-    ]
-    labels = [str(i + 1) for i in range(len(blue_line))]
+    # 2. Öncelik: Yüklenen best.pt dosyasının içinde gömülü train_results geçmişi varsa
+    if state.detector.embedded_train_results:
+        parsed = _parse_metrics_rows(
+            state.detector.embedded_train_results,
+            f"{state.detector.model_path.name} (Model İçi Eğitim Kaydı)",
+        )
+        if parsed.get("available"):
+            return parsed
+
+    # Gerçek veri henüz yüklenmemişse sahte grafik çizme!
     return {
-        "source": "default",
-        "labels": labels,
-        "chart1": {"blue": blue_line, "grey": grey_line, "title": "Eğitim & Doğrulama Kayıp (Loss) Eğrisi"},
-        "chart2": {"blue": blue_line, "grey": grey_line, "title": "Yakınsama & mAP@0.5 / Recall Performansı"},
+        "available": False,
+        "best_metrics": state.detector.checkpoint_meta.get("best_metrics", {}),
     }
 
 
@@ -389,4 +977,3 @@ async def download_pdf():
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-

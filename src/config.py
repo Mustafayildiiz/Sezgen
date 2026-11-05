@@ -20,3 +20,4 @@ DEFAULT_IOU_THRESHOLD = float(os.getenv("DEFAULT_IOU", "0.65"))      # Eşik 2: 
 DEFAULT_ALARM_THRESHOLD = float(os.getenv("DEFAULT_ALARM_THRESH", "0.85"))  # Eşik 3: 85%
 
 DEFAULT_CAMERA_LABEL = "CAM 04 - RUNWAY 27R"
+

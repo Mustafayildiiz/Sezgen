@@ -4,17 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sezgen — Havalimanı Pist FOD Tespit Sistemi</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link rel="stylesheet" href="/static/css/style.css?v=2.0" />
 </head>
 <body>
     <div class="app-container">
         <!-- Üst Başlık Çubuğu -->
         <header class="topbar">
             <div class="brand">
-                <svg class="brand-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1d70db" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="brand-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1d70db" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
                 </svg>
                 <h1 class="brand-title">Sezgen</h1>
+                <span id="deviceBadge" class="top-chip">CPU</span>
             </div>
 
             <button id="themeToggleBtn" class="theme-toggle" type="button" title="Temayı Değiştir">
@@ -35,133 +36,261 @@
 
         <!-- Ana 3 Sütunlu Operasyonel Panel -->
         <main class="main-grid">
-            <!-- Sol Panel: Video Yükleyiniz & Kontroller -->
+            <!-- SOL PANEL: Video Kaynağı & YOLOv26 Model Ayarları -->
             <section class="card left-panel">
                 <h2 class="panel-heading">Video Yükleyiniz</h2>
                 <div class="heading-underline"></div>
 
-                <label id="dropZone" class="upload-dropzone" for="fileInput">
-                    <input id="fileInput" type="file" accept="video/*,image/*,.pt,.onnx,.csv" hidden />
-                    <svg class="upload-arrow" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#1565c0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 4v15"></path>
-                        <path d="m6 13 6 6 6-6"></path>
+                <!-- Gerçek Video / Görsel Yükleme Alanı -->
+                <label id="mediaDropZone" class="upload-dropzone" for="mediaFileInput">
+                    <input id="mediaFileInput" type="file" accept=".mp4,.avi,.mov,.mkv,.webm,.m4v,.jpg,.jpeg,.png,.bmp,.webp" hidden />
+                    <svg class="upload-arrow" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#1565c0" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 4v14"></path>
+                        <path d="m6 12 6 6 6-6"></path>
                     </svg>
-                    <p id="uploadText" class="upload-caption">Dosya sürükleyip bırakın veya yükleyin</p>
+                    <p id="mediaUploadText" class="upload-caption">Video veya görsel sürükleyip bırakın (.mp4, .avi, .mov, .jpg, .png)</p>
+                    <div id="mediaProgressWrap" class="progress-wrap hidden">
+                        <div id="mediaProgressBar" class="progress-bar"></div>
+                    </div>
                 </label>
 
-                <!-- Canlı Akış / Derin Tarama Anahtarı -->
+                <!-- Yüklü Videolar Seçici & RTSP Bağlantısı -->
+                <div class="source-tools">
+                    <select id="existingMediaSelect" class="sezgen-select" title="Daha önce yüklenen medya dosyaları">
+                        <option value="">— Yüklü Medya Seçin —</option>
+                    </select>
+                    <details class="rtsp-details">
+                        <summary>Kamera / RTSP Akışı Bağla</summary>
+                        <div class="rtsp-row">
+                            <input id="rtspInput" type="text" class="sezgen-input" placeholder="rtsp://... veya kamera no (0)" />
+                            <button id="rtspConnectBtn" type="button" class="btn-secondary btn-sm">Bağlan</button>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="section-divider"></div>
+
+                <!-- YOLOv26 Model Ayarları Bölümü -->
+                <div class="model-section">
+                    <div class="section-header-row">
+                        <h3 class="sub-heading">Model Ayarları (YOLOv26)</h3>
+                        <button id="refreshModelsBtn" type="button" class="icon-btn" title="models/ klasörünü yeniden tara">↻</button>
+                    </div>
+
+                    <div id="modelStatusBox" class="model-status-box waiting">
+                        <span id="modelStatusDot" class="status-dot"></span>
+                        <div class="model-status-info">
+                            <strong id="modelStatusTitle">Model Bekleniyor</strong>
+                            <span id="modelStatusMeta">models/best.pt yükleyin</span>
+                        </div>
+                    </div>
+
+                    <div class="model-controls-row">
+                        <select id="modelSelect" class="sezgen-select" title="models/ klasöründeki ağırlık dosyaları">
+                            <option value="">— models/ içinde model yok —</option>
+                        </select>
+                        <label class="btn-secondary btn-upload-model" for="modelFileInput" title="Eğittiğiniz best.pt veya best.onnx dosyasını yükleyin">
+                            <input id="modelFileInput" type="file" accept=".pt,.onnx" hidden />
+                            <span id="modelUploadBtnText">best.pt Yükle</span>
+                        </label>
+                    </div>
+                    <div id="modelProgressWrap" class="progress-wrap hidden">
+                        <div id="modelProgressBar" class="progress-bar"></div>
+                    </div>
+
+                    <div class="imgsz-row">
+                        <label for="imgszSelect" class="field-label">Çözünürlük (imgsz):</label>
+                        <select id="imgszSelect" class="sezgen-select select-compact">
+                            <option value="320">320 px</option>
+                            <option value="480">480 px</option>
+                            <option value="640" selected>640 px</option>
+                            <option value="960">960 px</option>
+                            <option value="1280">1280 px</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Canlı Akış / Derin Tarama (SAHI) Anahtarı -->
                 <div class="mode-switch-row">
-                    <span id="labelLiveStream" class="mode-label active">Canlı Akış</span>
-                    <button id="modeSwitchBtn" class="switch-pill" type="button" role="switch" aria-checked="false" title="Canlı Akış / Derin Tarama (SAHI)">
+                    <span id="labelLiveStream" class="mode-label">Canlı Akış</span>
+                    <button id="modeSwitchBtn" class="switch-pill" type="button" role="switch" aria-checked="false" title="Canlı Akış (Tam Kare YOLO) / Derin Tarama (SAHI Dilimlemeli Küçük Nesne Tespiti)">
                         <span class="switch-thumb"></span>
                     </button>
                     <span id="labelDeepScan" class="mode-label">Derin Tarama</span>
                 </div>
 
-                <!-- Eşik Değerleri (Confidence, IoU, Alarm) -->
+                <!-- Gerçek Eşik Kaydırıcıları -->
                 <div class="sliders-group">
                     <div class="slider-block">
-                        <div class="slider-title">Eşik 1: <span id="valEsik1">44%</span></div>
+                        <div class="slider-title">Güven Eşiği (Conf): <span id="valConf">44%</span></div>
                         <div class="slider-row">
                             <span class="bound-label">0%</span>
-                            <input id="sliderEsik1" type="range" min="0" max="100" value="44" class="sezgen-slider" />
+                            <input id="sliderConf" type="range" min="1" max="99" value="44" class="sezgen-slider" />
                             <span class="bound-label">100%</span>
                         </div>
                     </div>
 
                     <div class="slider-block">
-                        <div class="slider-title">Eşik 2: <span id="valEsik2">65%</span></div>
+                        <div class="slider-title">Çakışma Eşiği (IoU): <span id="valIou">65%</span></div>
                         <div class="slider-row">
                             <span class="bound-label">0%</span>
-                            <input id="sliderEsik2" type="range" min="0" max="100" value="65" class="sezgen-slider" />
+                            <input id="sliderIou" type="range" min="5" max="95" value="65" class="sezgen-slider" />
                             <span class="bound-label">100%</span>
                         </div>
                     </div>
 
                     <div class="slider-block">
-                        <div class="slider-title">Eşik 3: <span id="valEsik3">85%</span></div>
+                        <div class="slider-title">Alarm Eşiği: <span id="valAlarm">85%</span></div>
                         <div class="slider-row">
                             <span class="bound-label">0%</span>
-                            <input id="sliderEsik3" type="range" min="0" max="100" value="85" class="sezgen-slider" />
+                            <input id="sliderAlarm" type="range" min="10" max="99" value="85" class="sezgen-slider" />
                             <span class="bound-label">100%</span>
                         </div>
                     </div>
                 </div>
 
-                <div class="start-btn-wrap">
+                <label class="loop-checkbox-row">
+                    <input id="loopVideoCheck" type="checkbox" />
+                    <span>Video bitince başa sar (Döngü)</span>
+                </label>
+
+                <div class="action-buttons-row">
                     <button id="startBtn" class="btn-primary" type="button">Başla</button>
+                    <button id="restartBtn" class="btn-secondary" type="button" title="Videoyu Başa Sar">Başa Sar</button>
+                    <button id="stepBtn" class="btn-secondary" type="button" title="Tek Kare İleri Analiz Et">+1 Kare</button>
                 </div>
             </section>
 
-            <!-- Orta Panel: Pist Kamera Görüntüsü + Sistem Günlükleri -->
+            <!-- ORTA PANEL: Gerçek Video Ekranı + Sistem Günlükleri -->
             <section class="center-column">
                 <div class="video-card" id="videoCard">
-                    <img id="videoStreamImg" class="runway-stream" alt="Pist Kamera Akışı" src="/api/stream" />
+                    <!-- Henüz video yüklenmediğinde görünen temiz bekleme ekranı -->
+                    <div id="videoEmptyState" class="video-empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                            <polygon points="10 9 15 12 10 15 10 9"></polygon>
+                        </svg>
+                        <h3>Henüz Video veya Görsel Yüklenmedi</h3>
+                        <p>Sol paneldeki <strong>Video Yükleyiniz</strong> alanından pist videosu (<code>.mp4, .avi, .mov</code>) veya görseli (<code>.jpg, .png</code>) seçin.</p>
+                        <p id="emptyStateModelHint" class="empty-model-hint">Model durumu kontrol ediliyor...</p>
+                    </div>
 
-                    <!-- Kamera HUD Katmanı -->
-                    <div class="hud-overlay">
-                        <div id="hudTimestamp" class="hud-line">24/10/27 02:47:38 UTC</div>
-                        <div id="hudCamera" class="hud-line">CAM 04 - RUNWAY 27R</div>
-                        <div id="hudLiveBadge" class="hud-badge">
-                            <span class="hud-dot"></span>
-                            <span id="hudBadgeText">CANLI AKIŞ</span>
+                    <!-- Gerçek Video / Görsel Çıktısı -->
+                    <img id="videoDisplayImg" class="runway-stream hidden" alt="Analiz Görüntüsü" />
+
+                    <!-- Gerçek Kamera / Dosya HUD Katmanı -->
+                    <div id="hudOverlay" class="hud-overlay hidden">
+                        <div id="hudSourceLine" class="hud-line">—</div>
+                        <div id="hudMetaLine" class="hud-line">—</div>
+                        <div class="hud-badges-row">
+                            <div class="hud-badge">
+                                <span id="hudStatusDot" class="hud-dot"></span>
+                                <span id="hudModeText">HAZIR</span>
+                            </div>
+                            <div id="hudModelBadge" class="hud-badge model-chip">MODELSİZ</div>
                         </div>
                     </div>
 
-                    <!-- Anlık FOD Alarm Göstergesi -->
+                    <!-- Gerçek FOD Alarm Göstergesi -->
                     <div id="alarmBanner" class="alarm-banner hidden">
                         <span class="alarm-pulse"></span>
-                        <span>FOD ALARMI — PİST ÜZERİNDE YABANCI CİSİM!</span>
+                        <span id="alarmBannerText">FOD ALARMI — YABANCI CİSİM TESPİT EDİLDİ!</span>
+                    </div>
+
+                    <!-- Alt Video Zaman ve Konum Kontrol Çubuğu -->
+                    <div id="videoTransportBar" class="transport-bar hidden">
+                        <button id="transportPlayBtn" type="button" class="transport-btn" title="Oynat / Duraklat">▶</button>
+                        <input id="seekSlider" type="range" min="0" max="100" value="0" class="seek-slider" title="Kare Konumu" />
+                        <span id="transportTimeLabel" class="transport-time">00:00.0 / 00:00.0 (Kare 0/0)</span>
+                        <button id="fullscreenBtn" type="button" class="transport-btn" title="Tam Ekran">⛶</button>
                     </div>
                 </div>
 
-                <!-- Sistem Günlükleri Kartı -->
+                <!-- Gerçek Sistem Günlükleri Kartı -->
                 <div class="card logs-card">
                     <div class="logs-header">
                         <h3 class="card-title">Sistem Günlükleri</h3>
                         <div class="export-actions">
-                            <a href="/api/export/csv" class="export-link" title="CSV Raporu İndir">CSV</a>
-                            <a href="/api/export/pdf" class="export-link" title="PDF Raporu İndir">PDF</a>
+                            <button id="clearLogsBtn" type="button" class="export-link btn-as-link" title="Günlükleri Temizle">Temizle</button>
+                            <a href="/api/export/csv" class="export-link" title="Gerçek Tespitleri CSV Olarak İndir">CSV İndir</a>
+                            <a href="/api/export/pdf" class="export-link" title="Gerçek Tespitleri PDF Olarak İndir">PDF İndir</a>
                         </div>
                     </div>
-                    <div id="logsContainer" class="logs-box">
-                        <div class="log-entry">[12:00:00] Sistem başlatıldı.</div>
-                        <div class="log-entry">[12:00:05] Video akışı alındı.</div>
-                        <div class="log-entry">[12:00:10] FOD tespiti yapıldı.</div>
-                    </div>
+                    <div id="logsContainer" class="logs-box"></div>
                 </div>
             </section>
 
-            <!-- Sağ Panel: Bulunan Eşyalar -->
+            <!-- SAĞ PANEL: Gerçek Bulunan Eşyalar -->
             <aside class="card right-panel">
-                <h2 class="card-title">Bulunan Eşyalar</h2>
-                <div id="foundItemsList" class="found-items-list">
-                    <!-- JS ile dinamik güncellenir -->
+                <div class="right-panel-header">
+                    <div class="title-with-count">
+                        <h2 class="card-title">Bulunan Eşyalar</h2>
+                        <span id="foundCountBadge" class="count-badge">0</span>
+                    </div>
+                    <button id="clearDetectionsBtn" type="button" class="export-link btn-as-link" title="Tespit Listesini Temizle">Temizle</button>
                 </div>
+
+                <div id="foundEmptyState" class="found-empty">
+                    Henüz tespit edilen yabancı cisim yok. Model (<code>best.pt</code>) ve video yükleyerek analizi başlatın.
+                </div>
+
+                <div id="foundItemsList" class="found-items-list"></div>
             </aside>
         </main>
 
-        <!-- Alt Panel: Eğitim Grafikleri -->
+        <!-- ALT PANEL: Gerçek Eğitim Grafikleri -->
         <section class="card charts-panel">
             <div class="charts-header">
-                <h2 class="card-title">Eğitim Grafikleri</h2>
-                <div class="chart-legend">
-                    <span class="legend-line blue"></span>
-                    <span class="legend-line grey"></span>
+                <div class="charts-title-group">
+                    <h2 class="card-title">Eğitim Grafikleri</h2>
+                    <span id="metricsSourceBadge" class="source-badge">Veri Bekleniyor</span>
+                </div>
+
+                <div class="charts-actions">
+                    <label class="export-link btn-as-link upload-csv-btn" for="metricsCsvInput" title="YOLO eğitimi sonucunda oluşan results.csv dosyasını yükleyin">
+                        <input id="metricsCsvInput" type="file" accept=".csv" hidden />
+                        <span>results.csv Yükle</span>
+                    </label>
                 </div>
             </div>
             <div class="charts-divider"></div>
-            <div class="charts-grid">
-                <div class="chart-wrapper">
-                    <canvas id="trainingChartLeft"></canvas>
+
+            <!-- Eğitim Özeti KPI Şeridi (Yalnızca gerçek veri yüklüyken görünür) -->
+            <div id="metricsSummaryStrip" class="metrics-summary-strip hidden"></div>
+
+            <!-- Veri yokken gösterilecek dürüst boş durum ekranı -->
+            <div id="chartsEmptyState" class="charts-empty-state">
+                <p><strong>Henüz eğitim grafiği verisi bulunmuyor.</strong></p>
+                <p>YOLOv26 eğitiminiz tamamlandığında oluşan <code>results.csv</code> dosyasını sağ üstteki <strong>results.csv Yükle</strong> butonuyla yükleyebilir veya <code>models/</code> klasörüne bırakabilirsiniz. (Eğitim geçmişi gömülü olan <code>best.pt</code> dosyaları yüklendiğinde grafikler otomatik çizilir.)</p>
+            </div>
+
+            <!-- Gerçek Grafikler -->
+            <div id="chartsGrid" class="charts-grid hidden">
+                <div class="chart-card-inner">
+                    <div class="chart-sub-header">
+                        <span id="leftChartTitle" class="chart-subtitle">Kayıp Eğrileri (Loss)</span>
+                        <div id="leftChartLegend" class="inline-legend"></div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="trainingChartLeft"></canvas>
+                        <div id="tooltipLeft" class="chart-tooltip hidden"></div>
+                    </div>
                 </div>
-                <div class="chart-wrapper">
-                    <canvas id="trainingChartRight"></canvas>
+
+                <div class="chart-card-inner">
+                    <div class="chart-sub-header">
+                        <span id="rightChartTitle" class="chart-subtitle">Doğruluk Metrikleri (%)</span>
+                        <div id="rightChartLegend" class="inline-legend"></div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="trainingChartRight"></canvas>
+                        <div id="tooltipRight" class="chart-tooltip hidden"></div>
+                    </div>
                 </div>
             </div>
         </section>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=2.0"></script>
 </body>
 </html>

@@ -1,16 +1,46 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.git/
-.gitignore
+# Sanal ortamlar
 .venv/
 venv/
+env/
+ENV/
+
+# Python önbellekleri
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Git / IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Test artıkları ve tanılama
+test/
+tests/
+scripts/
+*.log
+
+# Veri setleri ve yüklemeler (volume ile bağlanır)
 data/
 dateset/
 dataset/
 uploads/
+
+# Ağır dosyalar (volume olarak bağlanır)
+models/*.pt
+models/*.onnx
+models/*.engine
 reports/*.csv
 reports/*.pdf
-*.md
+
+# Dokümantasyon / not defterleri / tasarım görselleri
+assets/
 notebooks/
+*.md
