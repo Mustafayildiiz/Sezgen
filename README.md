@@ -32,32 +32,6 @@ Operatör paneli **Aydınlık Tema** ve **Karanlık Tema** seçeneklerine sahipt
 
 ---
 
-## 📂 Proje Dizin Yapısı
-
-```text
-Sezgen/
-├── assets/figma/            # Figma Aydınlık ve Karanlık tema tasarım referansları
-├── configs/
-│   └── data.yaml            # FOD-A v2.1 (31 sınıf) veri seti yapılandırması
-├── models/                  # Eğitilen YOLOv26 ağırlıkları (best.pt / best.onnx / results.csv)
-├── notebooks/
-│   └── train_colab.ipynb    # YOLO model eğitim Jupyter Notebook dosyası
-├── reports/                 # Dışa aktarılan CSV ve PDF FOD tespit raporları
-├── src/
-│   ├── config.py            # Sistem sabitleri ve varsayılan eşik ayarları
-│   ├── detector.py          # YOLOv26 + SAHI gerçek çıkarım ve model inceleme motoru
-│   ├── exporter.py          # Gerçek tespit kayıtları CSV ve PDF rapor üretici
-│   ├── risk.py              # 31 FOD sınıfı -> Türkçe etiket, risk seviyesi ve pist eşlemesi
-│   ├── voc_to_yolo.py       # FOD-A Pascal VOC (XML) -> YOLO (.txt) dönüştürücü
-│   └── web/                 # Operasyonel Web Arayüzü (FastAPI + HTML5/CSS3/JS)
-├── Dockerfile               # Konteyner imaj tanımı
-├── docker-compose.yml       # CPU ve GPU (NVIDIA CUDA) destekli servis orkestrasyonu
-├── main.py                  # Ana web sunucusu başlatıcı (Port 8000)
-└── requirements.txt         # Python bağımlılıkları
-```
-
----
-
 ## 🛠️ Kurulum ve Çalıştırma
 
 ### Docker ile Çalıştırma
