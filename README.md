@@ -10,7 +10,7 @@ Operatör paneli **Aydınlık Tema** ve **Karanlık Tema** seçeneklerine sahipt
 
 | Aydınlık Tema | Karanlık Tema |
 | :---: | :---: |
-| ![Aydınlık Tema](assets/figma/light_theme.png) | ![Karanlık Tema](assets/figma/dark_theme.png) |
+| ![Aydınlık Tema](assets/screenshots/light_theme.jpg) | ![Karanlık Tema](assets/screenshots/dark_theme.jpg) |
 
 ---
 
